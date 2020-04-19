@@ -26,6 +26,7 @@ function gdrive_download () {
 }
 ```
 - check that directory data/spider-20190205 contains 'database' directory
+
 like `gdrive_download 11icoH_EA-NYb0OrPTdehRWm_d7-DIzWX`
 - Unzip it somewhere
 - Run `bash data/spider-20190205/generate.sh /path/to/unzipped/spider`
