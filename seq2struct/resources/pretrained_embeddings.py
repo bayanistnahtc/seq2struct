@@ -1,12 +1,15 @@
 import abc
 import functools
 import os
+import pickle
 import time
 
 import bpemb
 import corenlp
+import nltk
 import torch
 import torchtext
+from pytorch_pretrained_bert import BertTokenizer, BertModel
 
 from seq2struct.resources import corenlp
 from seq2struct.utils import registry
@@ -95,3 +98,66 @@ class BPEmb(Embedder):
 
     def to(self, device):
         self.vectors = self.vectors.to(device)
+
+
+@registry.register('word_emb', 'tfidfemb')
+class TFIDF(Embedder):
+
+    def __init__(self, kind):
+        path = os.path.join(os.environ.get('CACHE_DIR', os.getcwd()), 'seq2struct/resources/tfidf.pkl')
+        self.tfidf = pickle.load(open(path, "rb")) #"~/Documents/synthesis/seq2struct_tfidf/seq2struct/resources/tfidf.pkl"
+        self.dim = len(self.tfidf.vocabulary_)
+
+    @functools.lru_cache(maxsize=1024)
+    def tokenize(self, text):
+        text = text.replace('[;\", \.]', ' ').lower()
+        return nltk.word_tokenize(text)
+
+    def untokenize(self, tokens):
+        return ' '.join(tokens)
+
+    def lookup(self, token):
+        tfidf_vec = self.tfidf.transform([token])[0]
+        return torch.from_numpy(tfidf_vec.toarray()[0])
+
+
+    def contains(self, token):
+        return token in self.tfidf.vocabulary_
+
+    def to(self, device):
+        # self.vectors = self.vectors.to(device)
+        pass
+
+
+@registry.register('word_emb', 'bertemb')
+class BertEmb(Embedder):
+
+    def __init__(self, kind):
+        self.tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+        self.model = BertModel.from_pretrained('bert-base-uncased')
+
+        # cache = os.path.join(os.environ.get('CACHE_DIR', os.getcwd()), '.vector_cache')
+        # self.glove = torchtext.vocab.GloVe(name=kind, cache=cache)
+        self.dim = 768#self.glove.dim
+        # self.vectors = self.glove.vectors
+        # print("Glove tut")
+
+    @functools.lru_cache(maxsize=1024)
+    def tokenize(self, text):
+        return self.tokenizer.tokenize(text)
+
+    def untokenize(self, tokens):
+        return ' '.join(tokens)
+
+    def lookup(self, token):
+        if token not in self.tokenizer.vocab:
+            return None
+        encoded = self.tokenizer.convert_tokens_to_ids([token])
+        return self.model(torch.tensor([encoded]))[0][0].reshape([768])
+
+    def contains(self, token):
+        return token in self.glove.stoi
+
+    def to(self, device):
+        pass
+        # self.vectors = self.vectors.to(device)
