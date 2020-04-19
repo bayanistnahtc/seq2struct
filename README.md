@@ -4,7 +4,7 @@ This repository requires Python 3.5 or greater.
 Example instructions to set up:
 ```
 virtualenv -p python3 /path/to/venv
-git clone https://github.com/rshin/seq2struct
+git clone https://github.com/bayanistnahtc/seq2struct
 cd seq2struct
 pip install -e .
 ```
