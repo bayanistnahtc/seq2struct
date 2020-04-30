@@ -31,7 +31,7 @@ def maybe_slice(iterable, start, end):
 class Inferer:
     def __init__(self, config):
         self.config = config
-        if torch.cuda.is_available():
+        if torch.cuda.is_available(): #  & False
             self.device = torch.device('cuda')
         else:
             self.device = torch.device('cpu')

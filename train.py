@@ -72,7 +72,7 @@ class Logger:
 
 class Trainer:
     def __init__(self, logger, config):
-        if torch.cuda.is_available():
+        if torch.cuda.is_available() and False:
             device = torch.device('cuda')
         else:
             device = torch.device('cpu')

@@ -262,28 +262,47 @@ class SpiderEncoderV2(torch.nn.Module):
             'linear': lambda: spider_enc_modules.EmbLinear(
                 input_size=self.word_emb_size,
                 output_size=self.word_emb_size),
+            #  batch_size, output_size, in_channels, out_channels, kernel_heights, stride, padding,
+            #                  keep_probab, vocab_size, embedding_length, weights
             'bilstm': lambda: spider_enc_modules.BiLSTM(
                 input_size=self.word_emb_size,
                 output_size=self.recurrent_size,
                 dropout=self.dropout,
                 summarize=False),
-            'bilstm-native': lambda: spider_enc_modules.BiLSTM(
-                input_size=self.word_emb_size,
-                output_size=self.recurrent_size,
-                dropout=self.dropout,
-                summarize=False,
-                use_native=True),
+            'cnn': lambda: spider_enc_modules.CNN_L(
+                batch_size=50,
+                output_size=300,
+                in_channels=1,
+                out_channels=self.recurrent_size,
+                # kernel_heights=[1, 3, 5],
+                stride=1,
+                padding=1,
+                keep_probab=0.2,
+                vocab_size=self.preproc.word_emb.vectors.shape[0],
+                embedding_length=self.word_emb_size,
+                weights=self.preproc.word_emb.vectors,
+                embedder=self.preproc.word_emb,
+                device=self._device,
+                vocab = self.vocab,
+                preproc_word_emb=self.preproc.word_emb
+                ),
+            # 'bilstm-native': lambda: spider_enc_modules.BiLSTM(
+            #     input_size=self.word_emb_size,
+            #     output_size=self.recurrent_size,
+            #     dropout=self.dropout,
+            #     summarize=False,
+            #     use_native=True),
             'bilstm-summarize': lambda: spider_enc_modules.BiLSTM(
                 input_size=self.word_emb_size,
                 output_size=self.recurrent_size,
                 dropout=self.dropout,
                 summarize=True),
-            'bilstm-native-summarize': lambda: spider_enc_modules.BiLSTM(
-                input_size=self.word_emb_size,
-                output_size=self.recurrent_size,
-                dropout=self.dropout,
-                summarize=True,
-                use_native=True),
+            # 'bilstm-native-summarize': lambda: spider_enc_modules.BiLSTM(
+            #     input_size=self.word_emb_size,
+            #     output_size=self.recurrent_size,
+            #     dropout=self.dropout,
+            #     summarize=True,
+            #     use_native=True),
         }
 
         modules = []
@@ -371,7 +390,9 @@ class SpiderEncoderV2(torch.nn.Module):
         # - Summarize each column into one?
         # c_enc: PackedSequencePlus, [batch, sum of column lens, recurrent_size]
         c_enc, c_boundaries = self.column_encoder([desc['columns'] for desc in descs])
-
+        # ++
+        q_enc_rr, _rr = self.question_encoder([[desc['question']] for desc in descs])
+        # ++
         column_pointer_maps = [
             {
                 i: list(range(left, right))
