@@ -203,102 +203,28 @@ class CNN_L(torch.nn.Module):
         self.embedding_length = embedding_length
         self.weights = weights
         # .from_pretrained(torch.FloatTensor(weights))
-        self.word_embeddings =  torch.nn.Embedding(
-            num_embeddings=vocab_size, #len(self.vocab)
-            embedding_dim=embedding_length, )
+        # self.word_embeddings = torch.nn.Embedding(
+        #     num_embeddings=vocab_size, #len(self.vocab)
+        #     embedding_dim=embedding_length, )
         # self.word_embeddings.weight =
         self.embedder = embedder
         self._device = device
         self.vocab = vocab
         self.preproc_word_emb = preproc_word_emb
-        self.filter_size = 3
-        self.sent_max_length = 110
+        self.filter_size = 5
+        self.sent_max_length = 50
         # self.vocab = vocab
-        # self.word_embeddings = nn.Embedding(vocab_size, embedding_length)
+        self.word_embeddings = nn.Embedding(vocab_size, embedding_length)
         # self.embedding = torch.nn.Embedding(
         #     num_embeddings=len(self.vocab),
         #     embedding_dim=emb_size)
 
         # self.word_embeddings.weight = nn.Parameter(weights, requires_grad=False)
-        #
-        # self.TEXT = torchtext.data.Field()
-        # self.TEXT.build_vocab(self.embedder.glove.itos, vectors=self.embedder.glove, unk_init=torch.Tensor.normal_)
-        #
-        # UNK_IDX = self.TEXT.vocab.stoi[self.TEXT.unk_token]
-        #
-        # # The string token used as padding. Default: “<pad>”.
-        # PAD_IDX = self.TEXT.vocab.stoi[self.TEXT.pad_token]
-        #
-        # self.word_embeddings.weight.data[UNK_IDX] = torch.zeros(embedding_length)
-        # self.word_embeddings.weight.data[PAD_IDX] = torch.zeros(embedding_length)
-
-        # self.conv1 = nn.Conv2d(in_channels, out_channels, (kernel_heights[0], embedding_length), stride, padding)
-        # self.conv2 = nn.Conv2d(in_channels, out_channels, (kernel_heights[1], embedding_length), stride, padding)
-        # self.conv3 = nn.Conv2d(in_channels, out_channels, (kernel_heights[2], embedding_length), stride, padding)
 
         kernel_size = [self.filter_size] * self.sent_max_length
         self.conv = nn.ModuleList([nn.Conv2d(1, out_channels, (i, embedding_length)) for i in kernel_size])
         self.maxpools = [nn.MaxPool2d((self.sent_max_length+1-i, 1)) for i in kernel_size]
         self.dropout = nn.Dropout(keep_probab)
-
-        # self.fc = nn.Linear(3 * out_channels, 256)
-        # self.label = nn.Linear(len(kernel_heights) * out_channels, output_size)
-
-        # x_x = 0
-        # kernel_size = [1, 2, 3, 5]
-        # kernel_num = 128
-        # fixed_length = 50
-        #
-        # # self.embedding = nn.Embedding.from_pretrained(lm)
-        # # self.embedding.weight.requires_grad = False
-        # # self.embedding.padding_idx = padding_idx
-        # self.conv = nn.ModuleList([nn.Conv2d(1, kernel_num, (i, input_size)) for i in kernel_size])
-        #
-        # self.maxpools = [nn.MaxPool2d((fixed_length + 1 - i, 1)) for i in kernel_size]
-        # self.dropout = nn.Dropout(p=0.2)
-        # self.fc = nn.Linear(len(kernel_size) * kernel_num, 300)
-
-        # if use_native:
-        #     self.lstm = torch.nn.LSTM(
-        #             input_size=input_size,
-        #             hidden_size=output_size // 2,
-        #             bidirectional=True,
-        #             dropout=dropout)
-        #     self.dropout = torch.nn.Dropout(dropout)
-        # else:
-        #     self.lstm = lstm.LSTM(
-        #             input_size=input_size,
-        #             hidden_size=output_size // 2,
-        #             bidirectional=True,
-        #             dropout=dropout)
-        # self.summarize = summarize
-        # self.use_native = use_native
-
-    # def forward_unbatched(self, input_):
-    #     # all_embs shape: sum of desc lengths x batch (=1) x input_size
-    #     all_embs, boundaries = input_
-    #
-    #     new_boundaries = [0]
-    #     outputs = []
-    #     for left, right in zip(boundaries, boundaries[1:]):
-    #         # state shape:
-    #         # - h: num_layers (=1) * num_directions (=2) x batch (=1) x recurrent_size / 2
-    #         # - c: num_layers (=1) * num_directions (=2) x batch (=1) x recurrent_size / 2
-    #         # output shape: seq len x batch size x output_size
-    #         if self.use_native:
-    #             inp = self.dropout(all_embs[left:right])
-    #             output, (h, c) = self.lstm(inp)
-    #         else:
-    #             output, (h, c) = self.lstm(all_embs[left:right])
-    #         if self.summarize:
-    #             seq_emb = torch.cat((h[0], h[1]), dim=-1).unsqueeze(0)
-    #             new_boundaries.append(new_boundaries[-1] + 1)
-    #         else:
-    #             seq_emb = output
-    #             new_boundaries.append(new_boundaries[-1] + output.shape[0])
-    #         outputs.append(seq_emb)
-    #
-    #     return torch.cat(outputs, dim=0), new_boundaries
 
     def _compute_boundaries(self, token_lists):
         # token_lists: list of list of lists
@@ -312,6 +238,7 @@ class CNN_L(torch.nn.Module):
         return boundaries
 
     def _embed_token(self, token, batch_idx, out):
+        token = token[0]
         if self.preproc_word_emb:
             emb = self.preproc_word_emb.lookup(token)
         else:
@@ -329,44 +256,29 @@ class CNN_L(torch.nn.Module):
         # - each list contains tokens
         # - each list corresponds to a column name, table name, etc.
         # PackedSequencePlus, with shape: [batch, sum of desc lengths, emb_size]
-        token_list_inds = [
-                [
-                    self.embedder.glove.stoi.get(token) if self.embedder.contains(token) else self.embedder.glove.stoi.get(",") #self.vocab.indices(token)#
-                    for token_list in token_lists_for_item
-                    for token in token_list + [',']*(self.sent_max_length-len(token_list))
-                ]
-                for token_lists_for_item in token_lists
-            ]
+        # token_list_inds = [
+        #         [
+        #             self.embedder.glove.stoi.get(token) if self.embedder.contains(token) else self.embedder.glove.stoi.get(",") #self.vocab.indices(token)#
+        #             for token_list in token_lists_for_item
+        #             for token in token_list + [',']*(self.sent_max_length-len(token_list))
+        #         ]
+        #         for token_lists_for_item in token_lists
+        #     ]
         boundaries = self._compute_boundaries(token_lists)
         all_embs = batched_sequence.PackedSequencePlus.from_lists(
             lists=[
                 [
-                    token
+                    [token]
                     for token_list in token_lists_for_item
-                    for token in token_list
+                    for token in token_list + ['<UNK>']*(self.sent_max_length-len(token_list))
                 ]
                 for token_lists_for_item in token_lists
             ],
-            item_shape=(self.embedding_length,),
+
+            item_shape=(self.sent_max_length, self.embedding_length,),
             tensor_type=torch.FloatTensor,
             item_to_tensor=self._embed_token)
-        all_embs = all_embs.apply(lambda d: d.to(self._device))
-        # PackedSequencePlus, with shape: [batch, num descs * desc length (sum of desc lengths)]
-        indices = batched_sequence.PackedSequencePlus.from_lists(
-            lists=[
-                [
-                    token
-                    for token_list in token_lists_for_item
-                    for token in token_list
-                ]
-                for token_lists_for_item in token_lists
-            ],
-            item_shape=(1,),  # For compatibility with old PyTorch versions
-            tensor_type=torch.LongTensor,
-            item_to_tensor=lambda token, batch_idx, out: out.fill_(self.vocab.index(token))
-        )
-        indices = indices.apply(lambda d: d.to(self._device))
-
+        # # all_embs = all_embs.apply(lambda d: d.to(self._device))
 
         desc_lengths = []
         batch_desc_to_flat_map = {}
@@ -384,7 +296,7 @@ class CNN_L(torch.nn.Module):
             return batch_idx, boundaries[batch_idx][desc_idx] + seq_idx
         def rearranged_all_embs_gather_from_indices(indices):
             batch_indices, seq_indices = zip(*indices)
-            remapped_ps_indices[:] =  all_embs.raw_index(batch_indices, seq_indices)
+            remapped_ps_indices[:] = all_embs.raw_index(batch_indices, seq_indices)
             return all_embs.ps.data[torch.LongTensor(remapped_ps_indices)]
         rearranged_all_embs = batched_sequence.PackedSequencePlus.from_gather(
             lengths=[length for _, _, length in desc_lengths],
@@ -394,18 +306,17 @@ class CNN_L(torch.nn.Module):
             x[0] for x in sorted(
                 enumerate(remapped_ps_indices), key=operator.itemgetter(1)))
 
+        # tok_inds = torch.Tensor(token_list_inds)
+        # tok_inds = tok_inds.to(torch.int64) #torch.LongTensor(tok_inds)#.to(torch.int64)
+        # input_ = self.word_embeddings(tok_inds)
+        # # input.size() = (batch_size, num_seq, embedding_length)
+        # input_ = input_.unsqueeze(1)
+        # # input.size() = (batch_size, 1, num_seq, embedding_length)
+        #
+        # # batch_size, 1, question_size, embedding_size
 
-
-        tok_inds = torch.Tensor(token_list_inds)
-        tok_inds = tok_inds.to(torch.int64) #torch.LongTensor(tok_inds)#.to(torch.int64)
-        input_ = self.word_embeddings(tok_inds)
-        # input.size() = (batch_size, num_seq, embedding_length)
-        input_ = input_.unsqueeze(1)
-        # input.size() = (batch_size, 1, num_seq, embedding_length)
-
-        # batch_size, 1, question_size, embedding_size
-
-        x = [self.maxpools[i](torch.relu(cov(input_))).squeeze(3).squeeze(2) for i, cov in enumerate(self.conv)]  # B X Kn
+        x = [self.maxpools[i](torch.relu(cov(all_embs.ps.data.unsqueeze(1)))).squeeze(3).squeeze(2)
+             for i, cov in enumerate(self.conv)]  # B X Kn
 
         new_x = []
         x = torch.cat(x, dim=0)

@@ -61,9 +61,9 @@ function(output_from, data_path='data/spider-20190205/') {
                 kind: '42B',
             },
             count_tokens_in_word_emb_for_vocab: false,
-            min_freq: 50,
+            min_freq: 30,
             max_count: 5000,
-            include_table_name_in_column: false,
+            include_table_name_in_column: true,
 
             save_path: PREFIX + 'nl2code-0401,output_from=%s,emb=glove-42B,min_freq=50/' % [output_from],
         },
