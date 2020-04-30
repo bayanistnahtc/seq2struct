@@ -36,6 +36,12 @@ Install Stanford CoreNLP:
 - Download http://nlp.stanford.edu/software/stanford-corenlp-full-2018-10-05.zip
 - Unzip it to `third_party/stanford-corenlp-full-2018-10-05`
 
+As we have several options for embeddings you can choose it by providing the target type in the file arxiv-1906.11790v1.jsonnet:
+- Glove nl2code-0428-base.libsonnet
+- One Hot nl2code-tfidf-base.libsonnet
+- BERT nl2code-bert-base.libsonnet
+
+
 To train the model:
 ```
 python train.py --config configs/spider-20190205/arxiv-1906.11790v1.jsonnet --logdir ../logs/arxiv-1906.11790v1
