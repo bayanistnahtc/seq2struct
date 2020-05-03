@@ -42,8 +42,8 @@ function(output_from, data_path='data/spider-20190205/') {
             dropout: 0.2,
             word_emb_size: 300,
             question_encoder: ['cnn'],
-            column_encoder: ['cnn'],
-            table_encoder: ['cnn'],
+            column_encoder: ['cnn-summarize'], #'emb', 'bilstm-summarize'], #
+            table_encoder: ['cnn-summarize'],
             update_config:  {
                 name: 'relational_transformer',
                 num_layers: 4,
@@ -91,7 +91,7 @@ function(output_from, data_path='data/spider-20190205/') {
         save_every_n: 100,
         report_every_n: 10,
 
-        max_steps: 20,
+        max_steps: 200000,
         num_eval_items: 50,
     },
     optimizer: {

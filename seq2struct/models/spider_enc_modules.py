@@ -167,8 +167,9 @@ class EmbLinear(torch.nn.Module):
 
 
 class CNN_L(torch.nn.Module):
-    def __init__(self, batch_size, output_size, in_channels, out_channels, stride, padding,
-                 keep_probab, vocab_size, embedding_length, weights, embedder, device, vocab, preproc_word_emb):
+    def __init__(self, output_size, in_channels, out_channels, stride, padding,
+                 keep_probab, vocab_size, embedding_length, weights, embedder, device,
+                 vocab, preproc_word_emb, summarize):
         # input_size: dimensionality of input
         # output_size: dimensionality of output
         # dropout
@@ -192,7 +193,7 @@ class CNN_L(torch.nn.Module):
         		--------
 
         		"""
-        self.batch_size = batch_size
+        # self.batch_size = batch_size
         self.output_size = output_size
         self.in_channels = in_channels
         self.out_channels = out_channels
@@ -202,28 +203,32 @@ class CNN_L(torch.nn.Module):
         self.vocab_size = vocab_size
         self.embedding_length = embedding_length
         self.weights = weights
+        self.vocab = vocab
         # .from_pretrained(torch.FloatTensor(weights))
-        # self.word_embeddings = torch.nn.Embedding(
-        #     num_embeddings=vocab_size, #len(self.vocab)
-        #     embedding_dim=embedding_length, )
+        self.word_embeddings = torch.nn.Embedding(
+            num_embeddings=len(self.vocab),  # 
+            embedding_dim=embedding_length)
+        # self.word_embeddings = torch.nn.Embedding.from_pretrained(torch.FloatTensor(weights))
+            #     (
+            # num_embeddings=vocab_size, #len(self.vocab)
+            # embedding_dim=embedding_length, )
         # self.word_embeddings.weight =
         self.embedder = embedder
         self._device = device
-        self.vocab = vocab
         self.preproc_word_emb = preproc_word_emb
-        self.filter_size = 5
-        self.sent_max_length = 50
-        # self.vocab = vocab
-        self.word_embeddings = nn.Embedding(vocab_size, embedding_length)
-        # self.embedding = torch.nn.Embedding(
-        #     num_embeddings=len(self.vocab),
-        #     embedding_dim=emb_size)
+        self.summarize = summarize
 
-        # self.word_embeddings.weight = nn.Parameter(weights, requires_grad=False)
+        self.filter_size = 5
+        self.sent_max_length = 30
+        # self.word_embeddings = nn.Embedding(num_embeddings=len(self.vocab), embedding_dim=embedding_length)
 
         kernel_size = [self.filter_size] * self.sent_max_length
-        self.conv = nn.ModuleList([nn.Conv2d(1, out_channels, (i, embedding_length)) for i in kernel_size])
-        self.maxpools = [nn.MaxPool2d((self.sent_max_length+1-i, 1)) for i in kernel_size]
+        if self.summarize:
+            self.conv = nn.Conv2d(1, out_channels, (kernel_size[0], embedding_length))
+            self.maxpools = nn.MaxPool2d((self.sent_max_length+1-kernel_size[0], 1))
+        else:
+            self.conv = nn.ModuleList([nn.Conv2d(1, out_channels, (i, embedding_length)) for i in kernel_size])
+            self.maxpools = [nn.MaxPool2d((self.sent_max_length+1-i, 1)) for i in kernel_size]
         self.dropout = nn.Dropout(keep_probab)
 
     def _compute_boundaries(self, token_lists):
@@ -247,30 +252,35 @@ class CNN_L(torch.nn.Module):
             emb = self.word_embeddings.weight[self.vocab.index(token)]
         out.copy_(emb)
 
+    def _embed_token_orig(self, token, batch_idx, out):
+        if self.preproc_word_emb:
+            emb = self.preproc_word_emb.lookup(token)
+        else:
+            emb = None
+        if emb is None:
+            emb = self.word_embeddings.weight[self.vocab.index(token)]
+        out.copy_(emb)
+
+    def _embed_token2(self, token):
+        if self.preproc_word_emb:
+            emb = self.preproc_word_emb.lookup(token)
+        else:
+            emb = None
+        if emb is None:
+            emb = self.word_embeddings.weight[self.vocab.index(token)]
+        return emb
+
     def forward(self, token_lists):
         # all_embs shape: PackedSequencePlus with shape [batch, sum of desc lengths, input_size]
         # boundaries: list of lists with shape [batch, num descs + 1]
-
-        # token_lists: list of list of lists
-        # [batch, num descs, desc length]
-        # - each list contains tokens
-        # - each list corresponds to a column name, table name, etc.
-        # PackedSequencePlus, with shape: [batch, sum of desc lengths, emb_size]
-        # token_list_inds = [
-        #         [
-        #             self.embedder.glove.stoi.get(token) if self.embedder.contains(token) else self.embedder.glove.stoi.get(",") #self.vocab.indices(token)#
-        #             for token_list in token_lists_for_item
-        #             for token in token_list + [',']*(self.sent_max_length-len(token_list))
-        #         ]
-        #         for token_lists_for_item in token_lists
-        #     ]
         boundaries = self._compute_boundaries(token_lists)
+
         all_embs = batched_sequence.PackedSequencePlus.from_lists(
             lists=[
                 [
                     [token]
                     for token_list in token_lists_for_item
-                    for token in token_list + ['<UNK>']*(self.sent_max_length-len(token_list))
+                    for token in token_list #+ ['<UNK>']*(self.sent_max_length-len(token_list))
                 ]
                 for token_lists_for_item in token_lists
             ],
@@ -278,7 +288,51 @@ class CNN_L(torch.nn.Module):
             item_shape=(self.sent_max_length, self.embedding_length,),
             tensor_type=torch.FloatTensor,
             item_to_tensor=self._embed_token)
-        # # all_embs = all_embs.apply(lambda d: d.to(self._device))
+        all_embs = all_embs.apply(lambda d: d.to(self._device))
+
+
+        # token_lists: list of list of lists
+        # [batch, num descs, desc length]
+        # - each list contains tokens
+        # - each list corresponds to a column name, table name, etc.
+        # PackedSequencePlus, with shape: [batch, sum of desc lengths, emb_size]
+        # token_list_inds = [
+        #     [
+        #         self.vocab.indices(token)[0] #self.embedder.glove.stoi.get(token) if self.embedder.contains(token) else self.embedder.glove.stoi.get(
+        #        #     ",")  # self.vocab.indices(token)#
+        #         for token_list in token_lists_for_item
+        #         for token in token_list + [','] * (self.sent_max_length - len(token_list))
+        #     ]
+        #     for token_lists_for_item in token_lists
+        # ]
+        # all_embs = batched_sequence.PackedSequencePlus.from_lists(
+        #     lists=[
+        #         [
+        #             token
+        #             for token_list in token_lists_for_item
+        #             for token in token_list
+        #         ]
+        #         for token_lists_for_item in token_lists
+        #     ],
+        #     item_shape=(self.embedding_length,),
+        #     tensor_type=torch.FloatTensor,
+        #     item_to_tensor=self._embed_token)
+        # all_embs = all_embs.apply(lambda d: d.to(self._device))
+        # # PackedSequencePlus, with shape: [batch, num descs * desc length (sum of desc lengths)]
+        # indices = batched_sequence.PackedSequencePlus.from_lists(
+        #     lists=[
+        #         [
+        #             token
+        #             for token_list in token_lists_for_item
+        #             for token in token_list
+        #         ]
+        #         for token_lists_for_item in token_lists
+        #     ],
+        #     item_shape=(1,),  # For compatibility with old PyTorch versions
+        #     tensor_type=torch.LongTensor,
+        #     item_to_tensor=lambda token, batch_idx, out: out.fill_(self.vocab.index(token))
+        # )
+        # indices = indices.apply(lambda d: d.to(self._device))
 
         desc_lengths = []
         batch_desc_to_flat_map = {}
@@ -291,13 +345,16 @@ class CNN_L(torch.nn.Module):
         # [batch * num descs, desc length, input_size]
         # with name `rearranged_all_embs`
         remapped_ps_indices = []
+
         def rearranged_all_embs_map_index(desc_lengths_idx, seq_idx):
             batch_idx, desc_idx, _ = desc_lengths[desc_lengths_idx]
             return batch_idx, boundaries[batch_idx][desc_idx] + seq_idx
+
         def rearranged_all_embs_gather_from_indices(indices):
             batch_indices, seq_indices = zip(*indices)
             remapped_ps_indices[:] = all_embs.raw_index(batch_indices, seq_indices)
             return all_embs.ps.data[torch.LongTensor(remapped_ps_indices)]
+
         rearranged_all_embs = batched_sequence.PackedSequencePlus.from_gather(
             lengths=[length for _, _, length in desc_lengths],
             map_index=rearranged_all_embs_map_index,
@@ -306,35 +363,57 @@ class CNN_L(torch.nn.Module):
             x[0] for x in sorted(
                 enumerate(remapped_ps_indices), key=operator.itemgetter(1)))
 
-        # tok_inds = torch.Tensor(token_list_inds)
-        # tok_inds = tok_inds.to(torch.int64) #torch.LongTensor(tok_inds)#.to(torch.int64)
-        # input_ = self.word_embeddings(tok_inds)
-        # # input.size() = (batch_size, num_seq, embedding_length)
-        # input_ = input_.unsqueeze(1)
-        # # input.size() = (batch_size, 1, num_seq, embedding_length)
-        #
-        # # batch_size, 1, question_size, embedding_size
+        input_ = rearranged_all_embs.ps.data.unsqueeze(1)
 
-        x = [self.maxpools[i](torch.relu(cov(all_embs.ps.data.unsqueeze(1)))).squeeze(3).squeeze(2)
-             for i, cov in enumerate(self.conv)]  # B X Kn
+        if self.summarize:
+            x = self.maxpools(torch.relu(self.conv(input_))).squeeze(3).squeeze(2)
+            dropout = self.dropout(x)
 
-        new_x = []
-        x = torch.cat(x, dim=0)
+            new_all_embs = batched_sequence.PackedSequencePlus.from_gather(
+                lengths=[len(boundaries_for_item) - 1 for boundaries_for_item in boundaries],
+                map_index=lambda batch_idx, desc_idx: rearranged_all_embs.sort_to_orig[batch_desc_to_flat_map[batch_idx, desc_idx]],
+                gather_from_indices=lambda indices: dropout[torch.LongTensor(indices)])
 
-        for idx, tup in enumerate(boundaries):
-            new_vect = x[self.sent_max_length * idx: self.sent_max_length * idx + self.sent_max_length][tup[0]: tup[1]]
-            new_x.append(new_vect)
+            new_boundaries = [
+                list(range(len(boundaries_for_item)))
+                for boundaries_for_item in boundaries
+            ]
+        else:
+            # tok_inds = torch.LongTensor(token_list_inds).cuda()
+            # tok_inds = tok_inds.to(torch.int64)  # torch.LongTensor(tok_inds)#.to(torch.int64)
+            # input_ = self.word_embeddings(tok_inds)
+            # input.size() = (batch_size, num_seq, embedding_length)
 
-        new_x = torch.cat(new_x, dim=0)
+            # input.size() = (batch_size, 1, num_seq, embedding_length)
 
-        # all_out.size() = (batch_size, num_kernels*out_channels)
-        dropout = self.dropout(new_x)
+            # batch_size, 1, question_size, embedding_size
+            x = [self.maxpools[i](torch.relu(cov(input_))).squeeze(3).squeeze(2) for i, cov in
+                 enumerate(self.conv)]  # B X Kn
 
-        new_all_embs = all_embs.apply(
-            lambda _: dropout[torch.LongTensor(rev_remapped_ps_indices)])
+            # x = [self.maxpools[i](torch.relu(cov(input_.unsqueeze(1)))).squeeze(3).squeeze(2)
+            #      for i, cov in enumerate(self.conv)]  # B X Kn
+
+            x = torch.cat(x, dim=0)
+
+            new_x = []
+            for idx, tup in enumerate(boundaries):
+                convol_part = x[self.sent_max_length * idx: self.sent_max_length * idx + self.sent_max_length]
+                while len(convol_part) < tup[1]:
+                    convol_part = torch.cat((convol_part, convol_part), dim=0)
+                new_vect = convol_part[tup[0]: tup[1]]
+                new_x.append(new_vect)
+
+            new_x = torch.cat(new_x, dim=0)
+
+            # all_out.size() = (batch_size, num_kernels*out_channels)
+            dropout = self.dropout(new_x)
+
+            new_all_embs = rearranged_all_embs.apply(
+                lambda _: dropout[torch.LongTensor(rev_remapped_ps_indices)])
+            new_boundaries = boundaries
 
         # new_all_embs = torch.nn.utils.rnn.PackedSequence(torch.Tensor(dropout), batch_first=True)
-        return new_all_embs, boundaries
+        return new_all_embs, new_boundaries
 
 
 class BiLSTM(torch.nn.Module):
