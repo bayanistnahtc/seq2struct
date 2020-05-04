@@ -269,7 +269,7 @@ class SpiderEncoderV2(torch.nn.Module):
                 output_size=self.recurrent_size,
                 dropout=self.dropout,
                 summarize=False),
-            'cnn': lambda: spider_enc_modules.CNN_L(
+            'cnn': lambda: spider_enc_modules.CNN_L2(
                 # batch_size=50,
                 output_size=300,
                 in_channels=1,

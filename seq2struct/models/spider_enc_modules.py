@@ -218,8 +218,8 @@ class CNN_L(torch.nn.Module):
         self.preproc_word_emb = preproc_word_emb
         self.summarize = summarize
 
-        self.filter_size = 5
-        self.sent_max_length = 30
+        self.filter_size = 3
+        self.sent_max_length = 40
         # self.word_embeddings = nn.Embedding(num_embeddings=len(self.vocab), embedding_dim=embedding_length)
 
         kernel_size = [self.filter_size] * self.sent_max_length
@@ -415,6 +415,233 @@ class CNN_L(torch.nn.Module):
         # new_all_embs = torch.nn.utils.rnn.PackedSequence(torch.Tensor(dropout), batch_first=True)
         return new_all_embs, new_boundaries
 
+
+class CNN_L2(torch.nn.Module):
+
+    def __init__(self, output_size, in_channels, out_channels, stride, padding,
+                 keep_probab, vocab_size, embedding_length, weights, embedder, device,
+                 vocab, preproc_word_emb, summarize):
+        # input_size: dimensionality of input
+        # output_size: dimensionality of output
+        # dropout
+        # summarize:
+        # - True: return Tensor of 1 x batch x emb size
+        # - False: return Tensor of seq len x batch x emb size
+        super().__init__()
+
+        """
+        		Arguments
+        		---------
+        		batch_size : Size of each batch which is same as the batch_size of the data returned by the TorchText BucketIterator
+        		output_size : 2 = (pos, neg)
+        		in_channels : Number of input channels. Here it is 1 as the input data has dimension = (batch_size, num_seq, embedding_length)
+        		out_channels : Number of output channels after convolution operation performed on the input matrix
+        		kernel_heights : A list consisting of 3 different kernel_heights. Convolution will be performed 3 times and finally results from each kernel_height will be concatenated.
+        		keep_probab : Probability of retaining an activation node during dropout operation
+        		vocab_size : Size of the vocabulary containing unique words
+        		embedding_length : Embedding dimension of GloVe word embeddings
+        		weights : Pre-trained GloVe word_embeddings which we will use to create our word_embedding look-up table
+        		--------
+
+        		"""
+        # self.batch_size = batch_size
+        self.output_size = output_size
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        # self.kernel_heights = kernel_heights
+        self.stride = stride
+        self.padding = padding
+        self.vocab_size = vocab_size
+        self.embedding_length = embedding_length
+        self.weights = weights
+        self.vocab = vocab
+        # .from_pretrained(torch.FloatTensor(weights))
+        self.word_embeddings = torch.nn.Embedding(
+            num_embeddings=len(self.vocab),  #
+            embedding_dim=embedding_length)
+        # self.word_embeddings = torch.nn.Embedding.from_pretrained(torch.FloatTensor(weights))
+            #     (
+            # num_embeddings=vocab_size, #len(self.vocab)
+            # embedding_dim=embedding_length, )
+        # self.word_embeddings.weight =
+        self.embedder = embedder
+        self._device = device
+        self.preproc_word_emb = preproc_word_emb
+        self.summarize = summarize
+
+        # self.filter_size = 3
+        self.sent_max_length = 40
+        # # self.word_embeddings = nn.Embedding(num_embeddings=len(self.vocab), embedding_dim=embedding_length)
+        #
+        # kernel_size = [self.filter_size] * self.sent_max_length
+        # if self.summarize:
+        #     self.conv = nn.Conv2d(1, out_channels, (kernel_size[0], embedding_length))
+        #     self.maxpools = nn.MaxPool2d((self.sent_max_length+1-kernel_size[0], 1))
+        # else:
+        #     self.conv = nn.ModuleList([nn.Conv2d(1, out_channels, (i, embedding_length)) for i in kernel_size])
+        #     self.maxpools = [nn.MaxPool2d((self.sent_max_length+1-i, 1)) for i in kernel_size]
+        # self.dropout = nn.Dropout(keep_probab)
+
+        self.lrelu = nn.LeakyReLU(inplace=True)
+        self.bn = nn.BatchNorm2d(in_channels)
+
+        self.conv1 = nn.Conv2d(in_channels=in_channels, out_channels=32, kernel_size=3, stride=1, padding=1)
+        self.conv2 = nn.Conv2d(in_channels=32, out_channels=32, kernel_size=3, stride=1, padding=1)
+        self.conv3 = nn.Conv2d(in_channels=64, out_channels=32, kernel_size=3, stride=1, padding=1)
+        # self.conv4 = nn.Conv2d(in_channels=24, out_channels=8, kernel_size=3, stride=1, padding=1)
+        # self.conv5 = nn.Conv2d(in_channels=64, out_channels=8, kernel_size=3, stride=1, padding=1)
+
+    def _compute_boundaries(self, token_lists):
+        # token_lists: list of list of lists
+        # [batch, num descs, desc length]
+        # - each list contains tokens
+        # - each list corresponds to a column name, table name, etc.
+        boundaries = [
+            np.cumsum([0] + [len(token_list) for token_list in token_lists_for_item])
+            for token_lists_for_item in token_lists]
+
+        return boundaries
+
+    def _embed_token(self, token, batch_idx, out):
+        token = token[0]
+        if self.preproc_word_emb:
+            emb = self.preproc_word_emb.lookup(token)
+        else:
+            emb = None
+        if emb is None:
+            emb = self.word_embeddings.weight[self.vocab.index(token)]
+        out.copy_(emb)
+
+    def _embed_token_orig(self, token, batch_idx, out):
+        if self.preproc_word_emb:
+            emb = self.preproc_word_emb.lookup(token)
+        else:
+            emb = None
+        if emb is None:
+            emb = self.word_embeddings.weight[self.vocab.index(token)]
+        out.copy_(emb)
+
+    def _embed_token2(self, token):
+        if self.preproc_word_emb:
+            emb = self.preproc_word_emb.lookup(token)
+        else:
+            emb = None
+        if emb is None:
+            emb = self.word_embeddings.weight[self.vocab.index(token)]
+        return emb
+
+    def forward(self, token_lists):
+        # all_embs shape: PackedSequencePlus with shape [batch, sum of desc lengths, input_size]
+        # boundaries: list of lists with shape [batch, num descs + 1]
+        boundaries = self._compute_boundaries(token_lists)
+
+        all_embs = batched_sequence.PackedSequencePlus.from_lists(
+            lists=[
+                [
+                    [token]
+                    for token_list in token_lists_for_item
+                    for token in token_list #+ ['<UNK>']*(self.sent_max_length-len(token_list))
+                ]
+                for token_lists_for_item in token_lists
+            ],
+
+            item_shape=(110, self.embedding_length,),
+            tensor_type=torch.FloatTensor,
+            item_to_tensor=self._embed_token)
+        all_embs = all_embs.apply(lambda d: d.to(self._device))
+
+        desc_lengths = []
+        batch_desc_to_flat_map = {}
+        for batch_idx, boundaries_for_item in enumerate(boundaries):
+            for desc_idx, (left, right) in enumerate(zip(boundaries_for_item, boundaries_for_item[1:])):
+                desc_lengths.append((batch_idx, desc_idx, right - left))
+                batch_desc_to_flat_map[batch_idx, desc_idx] = len(batch_desc_to_flat_map)
+
+        # Recreate PackedSequencePlus into shape
+        # [batch * num descs, desc length, input_size]
+        # with name `rearranged_all_embs`
+        remapped_ps_indices = []
+
+        def rearranged_all_embs_map_index(desc_lengths_idx, seq_idx):
+            batch_idx, desc_idx, _ = desc_lengths[desc_lengths_idx]
+            return batch_idx, boundaries[batch_idx][desc_idx] + seq_idx
+
+        def rearranged_all_embs_gather_from_indices(indices):
+            batch_indices, seq_indices = zip(*indices)
+            remapped_ps_indices[:] = all_embs.raw_index(batch_indices, seq_indices)
+            return all_embs.ps.data[torch.LongTensor(remapped_ps_indices)]
+
+        rearranged_all_embs = batched_sequence.PackedSequencePlus.from_gather(
+            lengths=[length for _, _, length in desc_lengths],
+            map_index=rearranged_all_embs_map_index,
+            gather_from_indices=rearranged_all_embs_gather_from_indices)
+        rev_remapped_ps_indices = tuple(
+            x[0] for x in sorted(
+                enumerate(remapped_ps_indices), key=operator.itemgetter(1)))
+
+        input_ = rearranged_all_embs.ps.data.unsqueeze(1)
+
+        if self.summarize:
+            x = self.maxpools(torch.relu(self.conv(input_))).squeeze(3).squeeze(2)
+            dropout = self.dropout(x)
+
+            new_all_embs = batched_sequence.PackedSequencePlus.from_gather(
+                lengths=[len(boundaries_for_item) - 1 for boundaries_for_item in boundaries],
+                map_index=lambda batch_idx, desc_idx: rearranged_all_embs.sort_to_orig[batch_desc_to_flat_map[batch_idx, desc_idx]],
+                gather_from_indices=lambda indices: dropout[torch.LongTensor(indices)])
+
+            new_boundaries = [
+                list(range(len(boundaries_for_item)))
+                for boundaries_for_item in boundaries
+            ]
+        else:
+
+            bn = self.bn(input_)
+            conv1 = self.lrelu(self.conv1(bn))
+            conv2 = self.lrelu(self.conv2(conv1))
+            # Concatenate in channel dimension
+            c2_dense = self.lrelu(torch.cat([conv1, conv2], 1))
+            conv3 = self.lrelu(self.conv3(c2_dense))
+            c3_dense = self.lrelu(torch.cat([conv1, conv2, conv3], 1))
+
+            # conv4 = self.lrelu(self.conv4(c3_dense))
+            # c4_dense = self.lrelu(torch.cat([conv1, conv2, conv3, conv4], 1))
+            #
+            # conv5 = self.lrelu(self.conv5(c4_dense))
+            # c5_dense = self.lrelu(torch.cat([conv1, conv2, conv3, conv4, conv5], 1))
+
+            a=0
+
+            # ________________________________
+
+            # batch_size, 1, question_size, embedding_size
+            x = [self.maxpools[i](torch.relu(cov(input_))).squeeze(3).squeeze(2) for i, cov in
+                 enumerate(self.conv)]  # B X Kn
+
+            # x = [self.maxpools[i](torch.relu(cov(input_.unsqueeze(1)))).squeeze(3).squeeze(2)
+            #      for i, cov in enumerate(self.conv)]  # B X Kn
+
+            x = torch.cat(x, dim=0)
+
+            new_x = []
+            for idx, tup in enumerate(boundaries):
+                convol_part = x[self.sent_max_length * idx: self.sent_max_length * idx + self.sent_max_length]
+                while len(convol_part) < tup[1]:
+                    convol_part = torch.cat((convol_part, convol_part), dim=0)
+                new_vect = convol_part[tup[0]: tup[1]]
+                new_x.append(new_vect)
+
+            new_x = torch.cat(new_x, dim=0)
+
+            # all_out.size() = (batch_size, num_kernels*out_channels)
+            dropout = self.dropout(new_x)
+
+            new_all_embs = rearranged_all_embs.apply(
+                lambda _: dropout[torch.LongTensor(rev_remapped_ps_indices)])
+            new_boundaries = boundaries
+
+        # new_all_embs = torch.nn.utils.rnn.PackedSequence(torch.Tensor(dropout), batch_first=True)
+        return new_all_embs, new_boundaries
 
 class BiLSTM(torch.nn.Module):
     def __init__(self, input_size, output_size, dropout, summarize, use_native=False):

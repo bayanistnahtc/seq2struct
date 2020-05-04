@@ -84,14 +84,14 @@ function(output_from, data_path='data/spider-20190205/') {
 
     train: {
         batch_size: 10,
-        eval_batch_size: 50,
+        eval_batch_size: 20,
 
         keep_every_n: 1000,
         eval_every_n: 100,
         save_every_n: 100,
         report_every_n: 10,
 
-        max_steps: 200000,
+        max_steps: 20,
         num_eval_items: 50,
     },
     optimizer: {
