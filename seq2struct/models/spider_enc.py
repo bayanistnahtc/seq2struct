@@ -287,8 +287,7 @@ class SpiderEncoderV2(torch.nn.Module):
                 preproc_word_emb=self.preproc.word_emb,
                 summarize=False
                 ),
-            'cnn-summarize': lambda: spider_enc_modules.CNN_L(
-                # batch_size=50,
+            'cnn-summarize': lambda: spider_enc_modules.CNN_L2(
                 output_size=300,
                 in_channels=1,
                 out_channels=self.recurrent_size,
@@ -301,7 +300,7 @@ class SpiderEncoderV2(torch.nn.Module):
                 weights=self.preproc.word_emb.vectors,
                 embedder=self.preproc.word_emb,
                 device=self._device,
-                vocab=self.vocab,
+                vocab = self.vocab,
                 preproc_word_emb=self.preproc.word_emb,
                 summarize=True
             ),

@@ -470,7 +470,7 @@ class CNN_L2(torch.nn.Module):
         self.summarize = summarize
 
         # self.filter_size = 3
-        self.sent_max_length = 40
+        self.sent_max_length = 110
         # # self.word_embeddings = nn.Embedding(num_embeddings=len(self.vocab), embedding_dim=embedding_length)
         #
         # kernel_size = [self.filter_size] * self.sent_max_length
@@ -481,15 +481,49 @@ class CNN_L2(torch.nn.Module):
         #     self.conv = nn.ModuleList([nn.Conv2d(1, out_channels, (i, embedding_length)) for i in kernel_size])
         #     self.maxpools = [nn.MaxPool2d((self.sent_max_length+1-i, 1)) for i in kernel_size]
         # self.dropout = nn.Dropout(keep_probab)
+        in_channels = 110
 
+        self.densenet_kernels = [[1,1], [3,3], [3,5], [3,7], [3,9]]
         self.lrelu = nn.LeakyReLU(inplace=True)
-        self.bn = nn.BatchNorm2d(in_channels)
+        self.bn = nn.BatchNorm1d(1)
 
-        self.conv1 = nn.Conv2d(in_channels=in_channels, out_channels=32, kernel_size=3, stride=1, padding=1)
-        self.conv2 = nn.Conv2d(in_channels=32, out_channels=32, kernel_size=3, stride=1, padding=1)
-        self.conv3 = nn.Conv2d(in_channels=64, out_channels=32, kernel_size=3, stride=1, padding=1)
-        # self.conv4 = nn.Conv2d(in_channels=24, out_channels=8, kernel_size=3, stride=1, padding=1)
-        # self.conv5 = nn.Conv2d(in_channels=64, out_channels=8, kernel_size=3, stride=1, padding=1)
+        self.dropout = nn.Dropout(keep_probab)
+        self.maxpool = nn.MaxPool1d(256)
+        self.fc = nn.Linear(400, 256)
+        densenet_first_num_filters = 200
+        densenet_num_filters = 100
+        densenet_last_num_filters = 400
+        self.densenet = DenseNet(self.densenet_kernels, embedding_length, densenet_first_num_filters, densenet_num_filters,
+                                 densenet_last_num_filters, activation=self.lrelu)
+        self.layernorm_densenet = nn.LayerNorm(self.densenet.last_dim)
+
+        self.num_filters = 64
+        self.kernel_sizes = [2, 3, 4, 5]
+        self.textcnn = TextCNN(densenet_last_num_filters, self.num_filters, self.kernel_sizes)
+        self.layernorm_textcnn = nn.LayerNorm(self.textcnn.last_dim)
+
+        if self.summarize:
+            self.mininet = CNN_L2(
+                output_size,
+                in_channels,
+                out_channels,
+                stride,
+                padding,
+                keep_probab,
+                vocab_size,
+                embedding_length,
+                weights,
+                embedder,
+                device,
+                vocab,
+                preproc_word_emb,
+                summarize=False
+                )
+            self.num_filters = 64
+            self.kernel_sizes = [2, 3, 4, 5]
+            self.textcnn = TextCNN(densenet_last_num_filters, self.num_filters, self.kernel_sizes)
+            self.layernorm_textcnn = nn.LayerNorm(self.textcnn.last_dim)
+
 
     def _compute_boundaries(self, token_lists):
         # token_lists: list of list of lists
@@ -533,21 +567,22 @@ class CNN_L2(torch.nn.Module):
     def forward(self, token_lists):
         # all_embs shape: PackedSequencePlus with shape [batch, sum of desc lengths, input_size]
         # boundaries: list of lists with shape [batch, num descs + 1]
+
         boundaries = self._compute_boundaries(token_lists)
 
         all_embs = batched_sequence.PackedSequencePlus.from_lists(
             lists=[
                 [
-                    [token]
+                    token
                     for token_list in token_lists_for_item
-                    for token in token_list #+ ['<UNK>']*(self.sent_max_length-len(token_list))
+                    for token in token_list + ['<UNK>'] * (self.sent_max_length - len(token_list))
                 ]
                 for token_lists_for_item in token_lists
             ],
 
-            item_shape=(110, self.embedding_length,),
+            item_shape=(self.embedding_length,),
             tensor_type=torch.FloatTensor,
-            item_to_tensor=self._embed_token)
+            item_to_tensor=self._embed_token_orig)
         all_embs = all_embs.apply(lambda d: d.to(self._device))
 
         desc_lengths = []
@@ -579,11 +614,22 @@ class CNN_L2(torch.nn.Module):
             x[0] for x in sorted(
                 enumerate(remapped_ps_indices), key=operator.itemgetter(1)))
 
-        input_ = rearranged_all_embs.ps.data.unsqueeze(1)
+
+
 
         if self.summarize:
-            x = self.maxpools(torch.relu(self.conv(input_))).squeeze(3).squeeze(2)
-            dropout = self.dropout(x)
+
+            a = self.mininet([token_lists[0]])
+            batches = [torch.nn.utils.rnn.pad_packed_sequence(self.mininet([butch])[0].ps)[0] for butch in token_lists]
+
+            torch.nn.utils.rnn.pad_packed_sequence(batches, batch_first=True)
+
+            final_out = rearranged_all_embs.ps.batch_sizes[0]
+
+            textcnn_out = self.textcnn(densenet_out)
+            # [batch_size, len(kernel_sizes) * num_filters]
+            textcnn_out = self.layernorm_textcnn(textcnn_out)
+            dropout = self.dropout(textcnn_out)
 
             new_all_embs = batched_sequence.PackedSequencePlus.from_gather(
                 lengths=[len(boundaries_for_item) - 1 for boundaries_for_item in boundaries],
@@ -596,52 +642,127 @@ class CNN_L2(torch.nn.Module):
             ]
         else:
 
-            bn = self.bn(input_)
-            conv1 = self.lrelu(self.conv1(bn))
-            conv2 = self.lrelu(self.conv2(conv1))
-            # Concatenate in channel dimension
-            c2_dense = self.lrelu(torch.cat([conv1, conv2], 1))
-            conv3 = self.lrelu(self.conv3(c2_dense))
-            c3_dense = self.lrelu(torch.cat([conv1, conv2, conv3], 1))
 
-            # conv4 = self.lrelu(self.conv4(c3_dense))
-            # c4_dense = self.lrelu(torch.cat([conv1, conv2, conv3, conv4], 1))
-            #
-            # conv5 = self.lrelu(self.conv5(c4_dense))
-            # c5_dense = self.lrelu(torch.cat([conv1, conv2, conv3, conv4, conv5], 1))
+            # input_ = rearranged_all_embs.ps.data.unsqueeze(1)
 
-            a=0
+            token_list_inds = torch.Tensor([
+                [
+                    self.embedder.glove.stoi.get(token) if self.embedder.contains(
+                        token) else self.embedder.glove.stoi.get(",")  # self.vocab.indices(token)#
+                    for token_list in token_lists_for_item
+                    for token in token_list + ['<UNK>'] * (110 - len(token_list))
+                ]
+                for token_lists_for_item in token_lists
+            ])
 
-            # ________________________________
+            aga, _ = torch.nn.utils.rnn.pad_packed_sequence(all_embs.ps, batch_first=True)
 
-            # batch_size, 1, question_size, embedding_size
-            x = [self.maxpools[i](torch.relu(cov(input_))).squeeze(3).squeeze(2) for i, cov in
-                 enumerate(self.conv)]  # B X Kn
+            densenet_out = self.densenet(aga, token_list_inds)
+            densenet_out = self.layernorm_densenet(densenet_out)
+            densenet_out = self.dropout(densenet_out)
 
-            # x = [self.maxpools[i](torch.relu(cov(input_.unsqueeze(1)))).squeeze(3).squeeze(2)
-            #      for i, cov in enumerate(self.conv)]  # B X Kn
-
-            x = torch.cat(x, dim=0)
-
-            new_x = []
-            for idx, tup in enumerate(boundaries):
-                convol_part = x[self.sent_max_length * idx: self.sent_max_length * idx + self.sent_max_length]
-                while len(convol_part) < tup[1]:
-                    convol_part = torch.cat((convol_part, convol_part), dim=0)
-                new_vect = convol_part[tup[0]: tup[1]]
-                new_x.append(new_vect)
-
-            new_x = torch.cat(new_x, dim=0)
-
-            # all_out.size() = (batch_size, num_kernels*out_channels)
-            dropout = self.dropout(new_x)
+            x_catted = torch.cat(list(densenet_out), 0)
+            x_catted = self.dropout(self.fc(x_catted))
 
             new_all_embs = rearranged_all_embs.apply(
-                lambda _: dropout[torch.LongTensor(rev_remapped_ps_indices)])
+                lambda _: x_catted[torch.LongTensor(rev_remapped_ps_indices)])
             new_boundaries = boundaries
 
         # new_all_embs = torch.nn.utils.rnn.PackedSequence(torch.Tensor(dropout), batch_first=True)
         return new_all_embs, new_boundaries
+
+
+
+import torch.nn.functional as F
+
+class TextCNN(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_sizes):
+        super(TextCNN, self).__init__()
+        convs = []
+        for ks in kernel_sizes:
+            convs.append(nn.Conv1d(in_channels=in_channels, out_channels=out_channels, kernel_size=ks))
+            '''
+            # depthwise convolution, 'out_channels' should be 'K * in_channels'
+            # see https://pytorch.org/docs/stable/nn.html#torch.nn.Conv1d , https://towardsdatascience.com/a-basic-introduction-to-separable-convolutions-b99ec3102728
+            convs.append(nn.Conv1d(in_channels=in_channels, out_channels=out_channels, kernel_size=ks, groups=in_channels))
+            '''
+        self.convs = nn.ModuleList(convs)
+        self.last_dim = len(kernel_sizes) * out_channels
+
+    def forward(self, x):
+        # x : [batch_size, seq_size, emb_dim]
+        # num_filters == out_channels
+        x = x.permute(0, 2, 1)
+        # x : [batch_size, emb_dim, seq_size]
+        conved = [F.relu(conv(x)) for conv in self.convs]
+        # conved : [ [batch_size, num_filters, *], [batch_size, num_filters, *], [batch_size, num_filters, *] ]
+        pooled = [F.max_pool1d(conv, int(conv.size(2))).squeeze(2) for conv in conved]
+        # pooled : [ [batch_size, num_filters], [batch_size, num_filters], [batch_size, num_filters] ]
+        cat = torch.cat(pooled, dim = 1)
+        # cat : [batch_size, len(kernel_sizes) * num_filters]
+        return cat
+
+class DenseNet(nn.Module):
+    def __init__(self, densenet_kernels, emb_dim, first_num_filters, num_filters, last_num_filters, activation):
+        super(DenseNet, self).__init__()
+        self.activation = activation
+        self.densenet_kernels = densenet_kernels
+        self.densenet_width = len(densenet_kernels[0])
+        self.densenet_block = []
+        for i, kss in enumerate(self.densenet_kernels): # densenet depth
+            if i == 0:
+                in_channels = emb_dim
+                out_channels = first_num_filters
+            else:
+                in_channels = first_num_filters + num_filters * (i-1)
+                out_channels = num_filters
+            convs = []
+            for j, ks in enumerate(kss):                # densenet width
+                padding = (ks - 1)//2
+                conv = nn.Conv1d(in_channels=in_channels, out_channels=out_channels, kernel_size=ks, padding=padding)
+                convs.append(conv)
+            convs = nn.ModuleList(convs)
+            self.densenet_block.append(convs)
+        self.densenet_block = nn.ModuleList(self.densenet_block)
+        ks = 1
+        in_channels = emb_dim + num_filters * self.densenet_width
+        out_channels = last_num_filters
+        padding = (ks - 1)//2
+        self.conv_last = nn.Conv1d(in_channels=in_channels, out_channels=out_channels, kernel_size=ks, padding=padding)
+        self.last_dim = last_num_filters
+
+    def forward(self, x, mask):
+        # x     : [batch_size, seq_size, emb_dim]
+        # mask  : [batch_size, seq_size]
+        x = x.permute(0, 2, 1)
+        # x     : [batch_size, emb_dim, seq_size]
+        masks = mask.unsqueeze(-1).to(torch.float)
+        # masks : [batch_size, seq_size, 1]
+        masks = masks.permute(0, 2, 1)
+        # masks : [batch_size, 1, seq_size]
+
+        merge_list = []
+        for j in range(self.densenet_width):
+            conv_results = []
+            for i, kss in enumerate(self.densenet_kernels):
+                if i == 0: conv_in = x
+                else: conv_in  = torch.cat(conv_results, dim=-2)
+                conv_out = self.densenet_block[i][j](conv_in)
+                # conv_out first : [batch_size, first_num_filters, seq_size]
+                # conv_out other : [batch_size, num_filters, seq_size]
+                conv_out *= masks # masking, auto broadcasting along with second dimension
+                conv_out = self.activation(conv_out)
+                conv_results.append(conv_out)
+            merge_list.append(conv_results[-1]) # last one only
+
+        conv_last = self.conv_last(torch.cat([x] + merge_list, dim=-2))
+        conv_last *= masks
+        conv_last = F.relu(conv_last)
+        # conv_last : [batch_size, last_num_filters, seq_size]
+        conv_last = conv_last.permute(0, 2, 1)
+        # conv_last : [batch_size, seq_size, last_num_filters]
+        return conv_last
+
 
 class BiLSTM(torch.nn.Module):
     def __init__(self, input_size, output_size, dropout, summarize, use_native=False):
