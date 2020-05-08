@@ -42,8 +42,8 @@ function(output_from, data_path='data/spider-20190205/') {
             dropout: 0.2,
             word_emb_size: 300,
             question_encoder: ['cnn'],
-            column_encoder: ['cnn-summarize'], #
-            table_encoder: ['emb', 'bilstm-summarize'],
+            column_encoder: ['cnn-summarize'],
+            table_encoder: ['cnn-summarize'],
             update_config:  {
                 name: 'relational_transformer',
                 num_layers: 4,
@@ -61,7 +61,7 @@ function(output_from, data_path='data/spider-20190205/') {
                 kind: '42B',
             },
             count_tokens_in_word_emb_for_vocab: false,
-            min_freq: 30,
+            min_freq: 50,
             max_count: 5000,
             include_table_name_in_column: true,
 
@@ -84,19 +84,19 @@ function(output_from, data_path='data/spider-20190205/') {
 
     train: {
         batch_size: 10,
-        eval_batch_size: 20,
+        eval_batch_size: 50,
 
         keep_every_n: 1000,
         eval_every_n: 100,
         save_every_n: 100,
         report_every_n: 10,
 
-        max_steps: 20,
+        max_steps: 20000,
         num_eval_items: 50,
     },
     optimizer: {
         name: 'adam',
-        lr: 0.0,
+        lr: 0,
     },
     lr_scheduler: {
         name: 'warmup_polynomial',

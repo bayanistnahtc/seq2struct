@@ -239,9 +239,9 @@ class SpiderEncoderV2(torch.nn.Module):
 
         update_modules = {
             'relational_transformer': 
-            spider_enc_modules.RelationalTransformerUpdate,
-            'none':
-            spider_enc_modules.NoOpUpdate,
+            spider_enc_modules.RelationalTransformerUpdate#,
+            # 'none':
+            # spider_enc_modules.NoOpUpdate,
         }
 
         self.encs_update = registry.instantiate(
@@ -278,9 +278,9 @@ class SpiderEncoderV2(torch.nn.Module):
                 stride=1,
                 padding=1,
                 keep_probab=0.2,
-                vocab_size=self.preproc.word_emb.vectors.shape[0],
+                vocab_size=len(self.vocab),
                 embedding_length=self.word_emb_size,
-                weights=self.preproc.word_emb.vectors,
+                # weights=len(self.vocab),
                 embedder=self.preproc.word_emb,
                 device=self._device,
                 vocab = self.vocab,
@@ -295,9 +295,9 @@ class SpiderEncoderV2(torch.nn.Module):
                 stride=1,
                 padding=1,
                 keep_probab=0.2,
-                vocab_size=self.preproc.word_emb.vectors.shape[0],
+                vocab_size=len(self.vocab),
                 embedding_length=self.word_emb_size,
-                weights=self.preproc.word_emb.vectors,
+                # weights=self.preproc.word_emb.vectors,
                 embedder=self.preproc.word_emb,
                 device=self._device,
                 vocab = self.vocab,

@@ -6,6 +6,6 @@
     },
 
     train+: {
-        batch_size: 10,
+        batch_size: 50,
     },
 }

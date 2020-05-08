@@ -5,7 +5,7 @@ import operator
 import numpy as np
 import torch
 from torch import nn
-from torch.nn.functional import relu, max_pool1d
+# from torch.nn.functional import relu, max_pool1d
 
 import torchtext
 
@@ -419,7 +419,7 @@ class CNN_L(torch.nn.Module):
 class CNN_L2(torch.nn.Module):
 
     def __init__(self, output_size, in_channels, out_channels, stride, padding,
-                 keep_probab, vocab_size, embedding_length, weights, embedder, device,
+                 keep_probab, vocab_size, embedding_length, embedder, device,
                  vocab, preproc_word_emb, summarize):
         # input_size: dimensionality of input
         # output_size: dimensionality of output
@@ -453,7 +453,7 @@ class CNN_L2(torch.nn.Module):
         self.padding = padding
         self.vocab_size = vocab_size
         self.embedding_length = embedding_length
-        self.weights = weights
+        # self.weights = weights
         self.vocab = vocab
         # .from_pretrained(torch.FloatTensor(weights))
         self.word_embeddings = torch.nn.Embedding(
@@ -470,7 +470,7 @@ class CNN_L2(torch.nn.Module):
         self.summarize = summarize
 
         # self.filter_size = 3
-        self.sent_max_length = 110
+        # self.sent_max_length = 110
         # # self.word_embeddings = nn.Embedding(num_embeddings=len(self.vocab), embedding_dim=embedding_length)
         #
         # kernel_size = [self.filter_size] * self.sent_max_length
@@ -481,48 +481,48 @@ class CNN_L2(torch.nn.Module):
         #     self.conv = nn.ModuleList([nn.Conv2d(1, out_channels, (i, embedding_length)) for i in kernel_size])
         #     self.maxpools = [nn.MaxPool2d((self.sent_max_length+1-i, 1)) for i in kernel_size]
         # self.dropout = nn.Dropout(keep_probab)
-        in_channels = 110
+        # in_channels = 110
 
-        self.densenet_kernels = [[1,1], [3,3], [3,5], [3,7], [3,9]]
+        self.densenet_kernels = [[1,1], [1,1], [1,1], [1,1]]#[[1,1], [3,3], [3,5], [3,7], [3,9]]
         self.lrelu = nn.LeakyReLU(inplace=True)
-        self.bn = nn.BatchNorm1d(1)
+        # self.bn = nn.BatchNorm1d(1)
 
         self.dropout = nn.Dropout(keep_probab)
         self.maxpool = nn.MaxPool1d(256)
-        self.fc = nn.Linear(400, 256)
-        densenet_first_num_filters = 200
-        densenet_num_filters = 100
-        densenet_last_num_filters = 400
+        # self.fc = nn.Linear(400, 256)
+        densenet_first_num_filters = 75
+        densenet_num_filters = 75
+        densenet_last_num_filters = 256
         self.densenet = DenseNet(self.densenet_kernels, embedding_length, densenet_first_num_filters, densenet_num_filters,
-                                 densenet_last_num_filters, activation=self.lrelu)
+                                 densenet_last_num_filters, activation=self.lrelu).to(self._device)
         self.layernorm_densenet = nn.LayerNorm(self.densenet.last_dim)
 
-        self.num_filters = 64
-        self.kernel_sizes = [2, 3, 4, 5]
-        self.textcnn = TextCNN(densenet_last_num_filters, self.num_filters, self.kernel_sizes)
-        self.layernorm_textcnn = nn.LayerNorm(self.textcnn.last_dim)
+        # self.num_filters = 64
+        # self.kernel_sizes = [2, 3, 4, 5]
+        # self.textcnn = TextCNN(densenet_last_num_filters, self.num_filters, self.kernel_sizes)
+        # self.layernorm_textcnn = nn.LayerNorm(self.textcnn.last_dim)
 
-        if self.summarize:
-            self.mininet = CNN_L2(
-                output_size,
-                in_channels,
-                out_channels,
-                stride,
-                padding,
-                keep_probab,
-                vocab_size,
-                embedding_length,
-                weights,
-                embedder,
-                device,
-                vocab,
-                preproc_word_emb,
-                summarize=False
-                )
-            self.num_filters = 64
-            self.kernel_sizes = [2, 3, 4, 5]
-            self.textcnn = TextCNN(densenet_last_num_filters, self.num_filters, self.kernel_sizes)
-            self.layernorm_textcnn = nn.LayerNorm(self.textcnn.last_dim)
+        # if self.summarize:
+        #     self.mininet = CNN_L2(
+        #         output_size,
+        #         in_channels,
+        #         out_channels,
+        #         stride,
+        #         padding,
+        #         keep_probab,
+        #         vocab_size,
+        #         embedding_length,
+        #         weights,
+        #         embedder,
+        #         device,
+        #         vocab,
+        #         preproc_word_emb,
+        #         summarize=False
+        #         )
+        #     self.num_filters = 64
+        #     self.kernel_sizes = [2, 3, 4, 5]
+        #     self.textcnn = TextCNN(densenet_last_num_filters, self.num_filters, self.kernel_sizes)
+        #     self.layernorm_textcnn = nn.LayerNorm(self.textcnn.last_dim)
 
 
     def _compute_boundaries(self, token_lists):
@@ -575,7 +575,7 @@ class CNN_L2(torch.nn.Module):
                 [
                     token
                     for token_list in token_lists_for_item
-                    for token in token_list + ['<UNK>'] * (self.sent_max_length - len(token_list))
+                    for token in token_list# + ['<UNK>'] * (self.sent_max_length - len(token_list))
                 ]
                 for token_lists_for_item in token_lists
             ],
@@ -614,22 +614,52 @@ class CNN_L2(torch.nn.Module):
             x[0] for x in sorted(
                 enumerate(remapped_ps_indices), key=operator.itemgetter(1)))
 
+        def lockup(token):
+            if token in self.vocab:
+                return self.vocab.index(token)
+            else:
+                return self.embedder.contains(token)
 
+        indices = batched_sequence.PackedSequencePlus.from_lists(
+            lists=[
+                [
+                    token
+                    for token_list in token_lists_for_item
+                    for token in token_list
+                ]
+                for token_lists_for_item in token_lists
+            ],
+            item_shape=(1,),  # For compatibility with old PyTorch versions
+            tensor_type=torch.LongTensor,
+            item_to_tensor=lambda token, batch_idx, out: out.fill_(lockup(token))
+        )
+        indices = indices.apply(lambda d: d.to(self._device))
 
+        # aga, _ = torch.nn.utils.rnn.pad_packed_sequence(all_embs.ps, batch_first=True)
+        input_data = torch.nn.utils.rnn.pad_packed_sequence(all_embs.ps, batch_first=True)[0].to(self._device)
+        mask = torch.nn.utils.rnn.pad_packed_sequence(indices.ps, batch_first=True)[0].squeeze(-1).to(self._device)
+        mask = torch.sign(torch.abs(mask)).to(torch.uint8).to(self._device)
+
+        densenet_out = self.densenet(input_data, mask)
+        densenet_out = self.layernorm_densenet(densenet_out)
+        densenet_out = self.dropout(densenet_out)
+
+        x_catted = torch.cat(list(densenet_out), 0)
+        dropout = self.dropout(x_catted)
 
         if self.summarize:
 
-            a = self.mininet([token_lists[0]])
-            batches = [torch.nn.utils.rnn.pad_packed_sequence(self.mininet([butch])[0].ps)[0] for butch in token_lists]
-
-            torch.nn.utils.rnn.pad_packed_sequence(batches, batch_first=True)
-
-            final_out = rearranged_all_embs.ps.batch_sizes[0]
-
-            textcnn_out = self.textcnn(densenet_out)
-            # [batch_size, len(kernel_sizes) * num_filters]
-            textcnn_out = self.layernorm_textcnn(textcnn_out)
-            dropout = self.dropout(textcnn_out)
+            # a = self.mininet([token_lists[0]])
+            # batches = [torch.nn.utils.rnn.pad_packed_sequence(self.mininet([butch])[0].ps)[0] for butch in token_lists]
+            #
+            # torch.nn.utils.rnn.pad_packed_sequence(batches, batch_first=True)
+            #
+            # final_out = rearranged_all_embs.ps.batch_sizes[0]
+            # x_catted = torch.cat(list(densenet_out), 0)
+            # # textcnn_out = self.textcnn(x_catted)
+            # # [batch_size, len(kernel_sizes) * num_filters]
+            # # textcnn_out = self.layernorm_textcnn(textcnn_out)
+            # dropout = self.dropout(x_catted)
 
             new_all_embs = batched_sequence.PackedSequencePlus.from_gather(
                 lengths=[len(boundaries_for_item) - 1 for boundaries_for_item in boundaries],
@@ -642,30 +672,21 @@ class CNN_L2(torch.nn.Module):
             ]
         else:
 
-
             # input_ = rearranged_all_embs.ps.data.unsqueeze(1)
 
-            token_list_inds = torch.Tensor([
-                [
-                    self.embedder.glove.stoi.get(token) if self.embedder.contains(
-                        token) else self.embedder.glove.stoi.get(",")  # self.vocab.indices(token)#
-                    for token_list in token_lists_for_item
-                    for token in token_list + ['<UNK>'] * (110 - len(token_list))
-                ]
-                for token_lists_for_item in token_lists
-            ])
+            # token_list_inds = torch.Tensor([
+            #     [
+            #         self.embedder.glove.stoi.get(token) if self.embedder.contains(
+            #             token) else self.embedder.glove.stoi.get(",")  # self.vocab.indices(token)#
+            #         for token_list in token_lists_for_item
+            #         for token in token_list + ['<UNK>'] * (110 - len(token_list))
+            #     ]
+            #     for token_lists_for_item in token_lists
+            # ])
 
-            aga, _ = torch.nn.utils.rnn.pad_packed_sequence(all_embs.ps, batch_first=True)
-
-            densenet_out = self.densenet(aga, token_list_inds)
-            densenet_out = self.layernorm_densenet(densenet_out)
-            densenet_out = self.dropout(densenet_out)
-
-            x_catted = torch.cat(list(densenet_out), 0)
-            x_catted = self.dropout(self.fc(x_catted))
 
             new_all_embs = rearranged_all_embs.apply(
-                lambda _: x_catted[torch.LongTensor(rev_remapped_ps_indices)])
+                lambda _: dropout[torch.LongTensor(rev_remapped_ps_indices)])
             new_boundaries = boundaries
 
         # new_all_embs = torch.nn.utils.rnn.PackedSequence(torch.Tensor(dropout), batch_first=True)
@@ -757,7 +778,7 @@ class DenseNet(nn.Module):
 
         conv_last = self.conv_last(torch.cat([x] + merge_list, dim=-2))
         conv_last *= masks
-        conv_last = F.relu(conv_last)
+        conv_last = F.leaky_relu(conv_last)
         # conv_last : [batch_size, last_num_filters, seq_size]
         conv_last = conv_last.permute(0, 2, 1)
         # conv_last : [batch_size, seq_size, last_num_filters]
