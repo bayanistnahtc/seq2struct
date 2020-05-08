@@ -40,7 +40,7 @@ function(output_from, data_path='data/spider-20190205/') {
         encoder: {
             name: 'spiderv2',
             dropout: 0.2,
-            word_emb_size: 300,
+            word_emb_size: 768,
             question_encoder: ['cnn'],
             column_encoder: ['cnn-summarize'],
             table_encoder: ['cnn-summarize'],
@@ -57,8 +57,8 @@ function(output_from, data_path='data/spider-20190205/') {
         },
         encoder_preproc: {
             word_emb: {
-                name: 'glove',
-                kind: '42B',
+                name: 'bertemb',
+                kind: '768',
             },
             count_tokens_in_word_emb_for_vocab: false,
             min_freq: 50,

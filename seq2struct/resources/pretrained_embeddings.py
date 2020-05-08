@@ -156,7 +156,7 @@ class BertEmb(Embedder):
         return self.model(torch.tensor([encoded]))[0][0].reshape([768])
 
     def contains(self, token):
-        return token in self.glove.stoi
+        return self.tokenizer.vocab.__contains__(token)
 
     def to(self, device):
         pass
