@@ -131,16 +131,31 @@ class TFIDF(Embedder):
 
 @registry.register('word_emb', 'bertemb')
 class BertEmb(Embedder):
+    # # Load pre-trained model (weights)
+    # model = BertModel.from_pretrained('bert-base-uncased')
+    # model.eval()
+    #
+    # # If you have a GPU, put everything on cuda
+    # tokens_tensor = tokens_tensor.to('cuda')
+    # segments_tensors = segments_tensors.to('cuda')
+    # model.to('cuda')
+    #
+    # # Predict hidden states features for each layer
+    # with torch.no_grad():
+    #     encoded_layers, _ = model(tokens_tensor, segments_tensors)
+    # # We have a hidden states for each of the 12 layers in model bert-base-uncased
+    # assert len(encoded_layers) == 12
 
     def __init__(self, kind):
         self.tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
-        self.model = BertModel.from_pretrained('bert-base-uncased')
-
+        self.model = BertModel.from_pretrained('bert-base-uncased').cuda(device=torch.device('cuda'))
+        self.model.training = False
         # cache = os.path.join(os.environ.get('CACHE_DIR', os.getcwd()), '.vector_cache')
         # self.glove = torchtext.vocab.GloVe(name=kind, cache=cache)
         self.dim = 768#self.glove.dim
         # self.vectors = self.glove.vectors
         # print("Glove tut")
+        self.model.to('cuda')
 
     @functools.lru_cache(maxsize=1024)
     def tokenize(self, text):
@@ -152,12 +167,12 @@ class BertEmb(Embedder):
     def lookup(self, token):
         if token not in self.tokenizer.vocab:
             return None
+
         encoded = self.tokenizer.convert_tokens_to_ids([token])
-        return self.model(torch.tensor([encoded]))[0][0].reshape([768])
+        return self.model(torch.cuda.LongTensor([encoded]))[0][0].reshape([768])
 
     def contains(self, token):
         return self.tokenizer.vocab.__contains__(token)
 
     def to(self, device):
-        pass
-        # self.vectors = self.vectors.to(device)
+        self.vectors = self.vectors.to(device)

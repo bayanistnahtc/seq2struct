@@ -3,10 +3,11 @@ import itertools
 import json
 import os
 
+import operator
 import attr
 import torch
 import torchtext
-
+import numpy as np
 from seq2struct.models import abstract_preproc
 
 try:
@@ -14,7 +15,7 @@ try:
 except ImportError:
     pass
 from seq2struct.models import spider_enc_modules
-from seq2struct.utils import registry
+from seq2struct.utils import registry, batched_sequence
 from seq2struct.utils import vocab
 from seq2struct.utils import serialization
 from seq2struct import resources
@@ -45,6 +46,72 @@ class PreprocessedSchema:
     foreign_keys = attr.ib(factory=dict)
     foreign_keys_tables = attr.ib(factory=lambda: collections.defaultdict(set))
     primary_keys = attr.ib(factory=list)
+
+
+
+
+
+class AlFu(torch.nn.Module):
+    def __init__(self, in_size=1024, out_size=256):
+        super().__init__()
+
+        self.fc1 = torch.nn.Linear(in_size, out_size)
+        self.fc2 = torch.nn.Linear(in_size, out_size)
+
+    def align_fusion(self, V_q, H_c):
+        fusion = torch.softmax(H_c.mm(torch.transpose(V_q, 0, 1)) /
+                               np.sqrt(H_c.shape[1]), 0).mm(V_q)
+        input_tens = torch.cat([fusion, H_c, fusion * H_c, fusion - H_c], 1)
+        return input_tens
+
+    def forward(self, question, columns):
+        input_tens = self.align_fusion(question, columns)
+        x_bar = torch.relu(self.fc1(input_tens))
+        g = torch.sigmoid(self.fc2(input_tens))
+        return (g * x_bar) + (1 - g) * columns
+
+#
+# class BiLSTM_SIM(torch.nn.Module):
+#     def __init__(self, input_size, output_size, dropout, summarize, use_native=False):
+#         # input_size: dimensionality of input
+#         # output_size: dimensionality of output
+#         # dropout
+#         # summarize:
+#         # - True: return Tensor of 1 x batch x emb size
+#         # - False: return Tensor of seq len x batch x emb size
+#         super().__init__()
+#
+#         if use_native:
+#             self.lstm = torch.nn.LSTM(
+#                     input_size=input_size,
+#                     hidden_size=output_size // 2,
+#                     bidirectional=True,
+#                     dropout=dropout)
+#             self.dropout = torch.nn.Dropout(dropout)
+#         else:
+#             self.lstm = lstm.LSTM(
+#                     input_size=input_size,
+#                     hidden_size=output_size // 2,
+#                     bidirectional=True,
+#                     dropout=dropout)
+#         self.summarize = summarize
+#         self.use_native = use_native
+#
+#
+#     def forward(self, all_embs, boundaries):
+#         for left, right in zip(boundaries, boundaries[1:]):
+#             # state shape:
+#             # - h: num_layers (=1) * num_directions (=2) x batch (=1) x recurrent_size / 2
+#             # - c: num_layers (=1) * num_directions (=2) x batch (=1) x recurrent_size / 2
+#             # output shape: seq len x batch size x output_size
+#             # self.lstm(torch.nn.utils.rnn.pack_sequence(all_embs.select(0).unsqueeze(0)))
+#             output, (h, c) = self.lstm(self.lstm(torch.nn.utils.rnn.pack_sequence(all_embs.unsqueeze(0)))[0])
+#             # if self.summarize:
+#             #     seq_emb = torch.cat((h[0], h[1]), dim=-1)
+#             # else:
+#             seq_emb = output.data
+#
+#         return seq_emb
 
 
 class SpiderEncoderV2Preproc(abstract_preproc.AbstractPreproc):
@@ -79,7 +146,7 @@ class SpiderEncoderV2Preproc(abstract_preproc.AbstractPreproc):
 
     def validate_item(self, item, section):
         return True, None
- 
+
     def add_item(self, item, section, validation_info):
         preprocessed = self.preprocess_item(item, validation_info)
         self.texts[section].append(preprocessed)
@@ -132,7 +199,7 @@ class SpiderEncoderV2Preproc(abstract_preproc.AbstractPreproc):
         result = self._preprocess_schema_uncached(schema)
         self.preprocessed_schemas[schema.db_id] = result
         return result
-    
+
     def _preprocess_schema_uncached(self, schema):
         r = PreprocessedSchema()
 
@@ -237,8 +304,32 @@ class SpiderEncoderV2(torch.nn.Module):
         self.column_encoder = self._build_modules(column_encoder)
         self.table_encoder = self._build_modules(table_encoder)
 
+        self.additional_enc = AlFu()
+
+        # 'bilstm': lambda: spider_enc_modules.BiLSTM(
+        #     input_size=self.word_emb_size,
+        #     output_size=self.recurrent_size,
+        #     dropout=self.dropout,
+        #     summarize=False),
+        # self.additional_lstm_question = BiLSTM_SIM(
+        #     input_size=256,
+        #     output_size=self.recurrent_size,
+        #     dropout=dropout,
+        #     summarize=False)
+        # self.additional_lstm_columns = BiLSTM_SIM(
+        #     input_size=256,
+        #     output_size=self.recurrent_size,
+        #     dropout=dropout,
+        #     summarize=True)
+        # self.additional_lstm_tables = BiLSTM_SIM(
+        #     input_size=256,
+        #     output_size=self.recurrent_size,
+        #     dropout=dropout,
+        #     summarize=True)
+        #
+
         update_modules = {
-            'relational_transformer': 
+            'relational_transformer':
             spider_enc_modules.RelationalTransformerUpdate#,
             # 'none':
             # spider_enc_modules.NoOpUpdate,
@@ -357,7 +448,7 @@ class SpiderEncoderV2(torch.nn.Module):
         c_enc_length = c_enc.shape[0]
         table_pointer_maps = {
             i: [
-                idx 
+                idx
                 for col in desc['table_to_columns'][str(i)]
                 for idx in column_pointer_maps[col]
             ] +  list(range(left + c_enc_length, right + c_enc_length))
@@ -369,7 +460,7 @@ class SpiderEncoderV2(torch.nn.Module):
         # batch (=1) x length x recurrent_size
         q_enc_new, c_enc_new, t_enc_new = self.encs_update(
                 desc, q_enc, c_enc, c_boundaries, t_enc, t_boundaries)
-        
+
         memory = []
         if 'question' in self.include_in_memory:
             memory.append(q_enc_new)
@@ -445,7 +536,7 @@ class SpiderEncoderV2(torch.nn.Module):
         if self.batch_encs_update:
             q_enc_new, c_enc_new, t_enc_new = self.encs_update(
                     descs, q_enc, c_enc, c_boundaries, t_enc, t_boundaries)
- 
+
         result = []
         for batch_idx, desc in enumerate(descs):
             if self.batch_encs_update:
@@ -453,13 +544,24 @@ class SpiderEncoderV2(torch.nn.Module):
                 c_enc_new_item = c_enc_new.select(batch_idx).unsqueeze(0)
                 t_enc_new_item = t_enc_new.select(batch_idx).unsqueeze(0)
             else:
+                q_enc_selected = q_enc.select(batch_idx)
+                c_enc_selected = c_enc.select(batch_idx)
+                t_enc_selected = t_enc.select(batch_idx)
+
+                c_enc_selected = self.additional_enc(q_enc_selected, c_enc_selected)
+                t_enc_selected = self.additional_enc(q_enc_selected, t_enc_selected)
+
+                # q_lstmed = self.additional_lstm_question(q_enc_selected, _[batch_idx])
+                # c_lstmed = self.additional_lstm_columns(c_enc_selected, c_boundaries[batch_idx])
+                # t_lstmed = self.additional_lstm_tables(t_enc_selected, t_boundaries[batch_idx])
+
                 q_enc_new_item, c_enc_new_item, t_enc_new_item = \
                         self.encs_update.forward_unbatched(
                                 desc,
-                                q_enc.select(batch_idx).unsqueeze(1),
-                                c_enc.select(batch_idx).unsqueeze(1),
+                                q_enc_selected.unsqueeze(1),
+                                c_enc_selected.unsqueeze(1),
                                 c_boundaries[batch_idx],
-                                t_enc.select(batch_idx).unsqueeze(1),
+                                t_enc_selected.unsqueeze(1),
                                 t_boundaries[batch_idx])
 
             memory = []
