@@ -84,7 +84,7 @@ function(output_from, data_path='data/spider-20190205/') {
 
     train: {
         batch_size: 10,
-        eval_batch_size: 5  0,
+        eval_batch_size: 50,
 
         keep_every_n: 1000,
         eval_every_n: 100,

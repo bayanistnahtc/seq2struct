@@ -483,7 +483,7 @@ class CNN_L2(torch.nn.Module):
         # self.dropout = nn.Dropout(keep_probab)
         # in_channels = 110
 
-        self.densenet_kernels = [[1,1], [1,1], [1,1], [1,1]]#[[1,1], [3,3], [3,5], [3,7], [3,9]]
+        self.densenet_kernels = [[1,1], [3,3], [3,5]] #[[1,1], [1,1], [1,1], [1,1]]#, [3,7], [3,9]
         self.lrelu = nn.LeakyReLU(inplace=True)
         # self.bn = nn.BatchNorm1d(1)
 
@@ -491,7 +491,7 @@ class CNN_L2(torch.nn.Module):
         self.maxpool = nn.MaxPool1d(256)
         # self.fc = nn.Linear(400, 256)
         densenet_first_num_filters = 75
-        densenet_num_filters = 75
+        densenet_num_filters = 150
         densenet_last_num_filters = 256
         self.densenet = DenseNet(self.densenet_kernels, embedding_length, densenet_first_num_filters, densenet_num_filters,
                                  densenet_last_num_filters, activation=self.lrelu).to(self._device)
