@@ -483,7 +483,7 @@ class CNN_L2(torch.nn.Module):
         # self.dropout = nn.Dropout(keep_probab)
         # in_channels = 110
 
-        self.densenet_kernels = [[1,1], [3,3], [3,5]] #[[1,1], [1,1], [1,1], [1,1]]#, [3,7], [3,9]
+        self.densenet_kernels = [[1,1], [3,3], [3,5] [3,7], [3,9]] #[[1,1], [1,1], [1,1], [1,1]]#,
         self.lrelu = nn.LeakyReLU(inplace=True)
         # self.bn = nn.BatchNorm1d(1)
 
@@ -497,10 +497,10 @@ class CNN_L2(torch.nn.Module):
                                  densenet_last_num_filters, activation=self.lrelu).to(self._device)
         self.layernorm_densenet = nn.LayerNorm(self.densenet.last_dim)
 
-        # self.num_filters = 64
-        # self.kernel_sizes = [2, 3, 4, 5]
-        # self.textcnn = TextCNN(densenet_last_num_filters, self.num_filters, self.kernel_sizes)
-        # self.layernorm_textcnn = nn.LayerNorm(self.textcnn.last_dim)
+        self.num_filters = 64
+        self.kernel_sizes = [2, 3, 4, 5]
+        self.textcnn = TextCNN(densenet_last_num_filters, self.num_filters, self.kernel_sizes)
+        self.layernorm_textcnn = nn.LayerNorm(self.textcnn.last_dim)
 
         # if self.summarize:
         #     self.mininet = CNN_L2(
@@ -643,6 +643,13 @@ class CNN_L2(torch.nn.Module):
         densenet_out = self.densenet(input_data, mask)
         densenet_out = self.layernorm_densenet(densenet_out)
         densenet_out = self.dropout(densenet_out)
+
+        # # 3. convolution
+        # textcnn_out = self.textcnn(densenet_out)
+        # # [batch_size, len(kernel_sizes) * num_filters]
+        # textcnn_out = self.layernorm_textcnn(textcnn_out)
+        # textcnn_out = self.dropout(textcnn_out)
+
 
         x_catted = torch.cat(list(densenet_out), 0)
         dropout = self.dropout(x_catted)
